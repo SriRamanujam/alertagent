@@ -1,2 +1,6 @@
 **/__pycache__/*
 mise.local.toml
+
+# Plan files
+.plans/
+PLAN.md

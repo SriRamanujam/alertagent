@@ -9,4 +9,8 @@ python.uv_venv_auto = "create|source"
 dev = "uv run uvicorn alertagent.app:app --reload --port 8000"
 
 [env]
-ALERTAGENT_DISCORD_WEBHOOK_URL = { required = "Create a mise.local.toml and set this to your test webhook URL." }
+ALERTAGENT_DISCORD_BOT_TOKEN = { required = "Create a mise.local.toml and set this to your bot's token." }
+ALERTAGENT_DISCORD_CHANNEL_ID = { required = "Copy the channel ID from Discord." }
+ALERTAGENT_OPENAI_ENDPOINT = { default = "https://api.openai.com/v1" }
+ALERTAGENT_OPENAI_MODEL = { default = "gpt-5-mini" }
+ALERTAGENT_OPENAI_KEY = { required = "Set this to your OpenAI API key, or the blank string if you don't need one." }
