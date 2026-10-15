@@ -8,7 +8,10 @@ license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Sri Ramanujam", email = "2983875+SriRamanujam@users.noreply.github.com" }]
 dependencies = [
+    "aiohttp>=3.14.5",
+    "discord-py>=2.7.1",
     "fastapi>=0.143.2",
+    "pydantic-settings>=2.16.0",
     "uvicorn[standard]>=0.54.0",
 ]
 
