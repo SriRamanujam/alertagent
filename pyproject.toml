@@ -7,7 +7,10 @@ requires-python = ">=3.14"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Sri Ramanujam", email = "2983875+SriRamanujam@users.noreply.github.com" }]
-dependencies = []
+dependencies = [
+    "fastapi>=0.143.2",
+    "uvicorn[standard]>=0.54.0",
+]
 
 [project.scripts]
 alertagent = "alertagent:main"

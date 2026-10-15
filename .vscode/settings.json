@@ -1,4 +1,11 @@
 {
     "git.enabled": false,
-    "python.defaultInterpreterPath": "/home/sramanujam@sriramanujam.lan/.local/share/mise/installs/python/latest/bin/python"
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
+    "python-envs.pythonProjects": [
+        {
+            "path": ".",
+            "envManager": "ms-python.python:venv",
+            "packageManager": "ms-python.python:pip"
+        }
+    ]
 }

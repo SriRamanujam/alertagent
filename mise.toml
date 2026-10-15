@@ -1,6 +1,9 @@
 [tools]
 uv = "latest"
-python = "latest"
+python = "3.14"
 
 [settings]
 python.uv_venv_auto = "create|source"
+
+[tasks]
+dev = "uv run uvicorn alertagent.app:app --reload --port 8000"
