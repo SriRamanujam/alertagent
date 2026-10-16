@@ -1,0 +1,6 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertagent
+  annotations:
+    image.openshift.io/triggers: '[{"fieldPath":"spec.template.spec.containers[?(@.name==\"alertagent\")].image","from":{"kind":"ImageStreamTag","name":"alertagent:latest"}}]'

@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertagent
+  labels:
+    app: alertagent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: alertagent
+  template:
+    metadata:
+      labels:
+        app: alertagent
+    spec:
+      serviceAccountName: alertagent
+      containers:
+        - name: alertagent
+          image: ghcr.io/sriramanujam/alertagent:latest
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: ALERTAGENT_DISCORD_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: alertagent-secrets
+                  key: ALERTAGENT_DISCORD_BOT_TOKEN
+            - name: ALERTAGENT_DISCORD_CHANNEL_ID
+              valueFrom:
+                secretKeyRef:
+                  name: alertagent-secrets
+                  key: ALERTAGENT_DISCORD_CHANNEL_ID
+            - name: ALERTAGENT_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: alertagent-secrets
+                  key: ALERTAGENT_OPENAI_API_KEY
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault

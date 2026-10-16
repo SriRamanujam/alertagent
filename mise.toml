@@ -1,6 +1,8 @@
 [tools]
 uv = "latest"
 python = "3.14"
+kustomize = "latest"
+kubectl = "latest"
 
 [settings]
 python.uv_venv_auto = "create|source"

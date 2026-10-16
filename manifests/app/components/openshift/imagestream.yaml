@@ -1,0 +1,16 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: alertagent
+spec:
+  lookupPolicy:
+    local: false
+  tags:
+  - from:
+      kind: DockerImage
+      name: ghcr.io/sriramanujam/alertagent:latest
+    importPolicy:
+      scheduled: true
+    name: latest
+    referencePolicy:
+      type: Local
