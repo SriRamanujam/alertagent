@@ -1,1 +1,8 @@
-.venv/
+# Default deny, only allowlist necessary files
+*
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!src/**/*.py
