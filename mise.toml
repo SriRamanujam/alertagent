@@ -7,6 +7,7 @@ python.uv_venv_auto = "create|source"
 
 [tasks]
 dev = "uv run uvicorn alertagent.app:app --reload --port 8000"
+lint = "uv run black src/"
 
 [env]
 ALERTAGENT_DISCORD_BOT_TOKEN = { required = "Create a mise.local.toml and set this to your bot's token." }

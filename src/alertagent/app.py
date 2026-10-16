@@ -46,10 +46,19 @@ def build_alert_embed(alert: AlertmanagerAlert) -> discord.Embed:
     severity = alert.labels.get("severity", "none")
     embed = discord.Embed(
         title=severity.upper(),
-        description=SEVERITY_DESCRIPTIONS.get(severity, "Unknown severity. Take a look at these"),
-        color=COLOR_GREEN if alert.status == ALERT_STATUS_RESOLVED else SEVERITY_COLORS.get(severity, COLOR_GRAY),
+        description=SEVERITY_DESCRIPTIONS.get(
+            severity, "Unknown severity. Take a look at these"
+        ),
+        color=(
+            COLOR_GREEN
+            if alert.status == ALERT_STATUS_RESOLVED
+            else SEVERITY_COLORS.get(severity, COLOR_GRAY)
+        ),
     )
-    embed.set_author(name=alert.labels.get("prometheus", ""), url=alert.generator_url.replace("///", "//"))
+    embed.set_author(
+        name=alert.labels.get("prometheus", ""),
+        url=alert.generator_url.replace("///", "//"),
+    )
     embed.set_footer(text=_humanized_delta(alert.starts_at))
     body = alert.annotations.get("description")
     if body is None:
@@ -65,23 +74,27 @@ def build_alert_embed(alert: AlertmanagerAlert) -> discord.Embed:
 def root() -> dict[str, str]:
     return {"message": "Hello from alertagent!"}
 
+
 @app.post("/", status_code=204)
 async def alertmanager_ingest(
-    message: AlertmanagerMessage,
-    settings: Annotated[Settings, Depends(get_settings)]
+    message: AlertmanagerMessage, settings: Annotated[Settings, Depends(get_settings)]
 ) -> None:
     bot = Discord.get_client()
     chan = await bot.fetch_channel(settings.discord_channel_id)
     if not isinstance(chan, (discord.TextChannel, discord.Thread)):
-        raise HTTPException(status_code=500, detail="configured Discord channel is not a text channel")
+        raise HTTPException(
+            status_code=500, detail="configured Discord channel is not a text channel"
+        )
 
     async def open_thread(alert: AlertmanagerAlert) -> discord.Thread:
         msg = await chan.send(embed=build_alert_embed(alert))
         return await msg.create_thread(name="Bot analysis", reason="Automated triage")
 
     firing = [
-        a for a in message.alerts
-        if a.status == ALERT_STATUS_FIRING and a.labels.get("alertname", "") != "Watchdog"
+        a
+        for a in message.alerts
+        if a.status == ALERT_STATUS_FIRING
+        and a.labels.get("alertname", "") != "Watchdog"
     ]
     threads = list(await asyncio.gather(*[open_thread(a) for a in firing]))
 
