@@ -6,8 +6,8 @@ class Settings(BaseSettings):
     discord_bot_token: str
     discord_channel_id: int
 
-    openai_base_url: str
-    model_name: str
+    openai_base_url: str = "https://api.openai.com/v1"
+    model_name: str = "gpt-5-mini"
     openai_api_key: str
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="ALERTAGENT_")
