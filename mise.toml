@@ -15,3 +15,6 @@ ALERTAGENT_DISCORD_CHANNEL_ID = { required = "Copy the channel ID from Discord."
 ALERTAGENT_OPENAI_BASE_URL = { default = "https://api.openai.com/v1" }
 ALERTAGENT_MODEL_NAME = { default = "gpt-5-mini" }
 ALERTAGENT_OPENAI_API_KEY = { required = "Set this to your OpenAI API key, or the blank string if you don't need one." }
+
+# Without this, Pydantic advertises their obs platform at me when the first request comes in.
+PYDANTIC_AI_NO_BANNER = 1
