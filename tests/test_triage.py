@@ -1,7 +1,10 @@
 import asyncio
 
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.messages import ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai_harness import ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, Truncate
 
 from alertagent.alertmanager import AlertmanagerAlert
 from alertagent.triage import TRIAGE_INSTRUCTIONS, build_prompt, build_triage_agent
@@ -42,8 +45,8 @@ def fake_model(messages, agent_info):
     return ModelResponse([TextPart(ANALYSIS)])
 
 
-def test_agent_run_with_function_model() -> None:
-    agent = build_triage_agent(FunctionModel(fake_model))
+def test_agent_run_with_function_model(tmp_path) -> None:
+    agent = build_triage_agent(FunctionModel(fake_model), timeout=300, scratch_dir=tmp_path)
     result = asyncio.run(agent.run(build_prompt(ALERT)))
     # the prompt built from the alert is exactly what the model receives
     assert REQUEST["user_prompt"] == build_prompt(ALERT)
@@ -51,3 +54,20 @@ def test_agent_run_with_function_model() -> None:
     # (pydantic-ai strips leading/trailing whitespace from instructions)
     assert REQUEST["instructions"].strip() == TRIAGE_INSTRUCTIONS.strip()
     assert result.output == ANALYSIS
+
+
+def test_agent_wires_tool_output_limits(tmp_path) -> None:
+    # in pydantic-ai 2.56 the kubernetes toolset is absorbed into the code-mode
+    # sandbox (only run_code is callable), so one giant run_code result can
+    # otherwise blow the context window; oversized returns must be spilled
+    agent = build_triage_agent(FunctionModel(fake_model), timeout=300, scratch_dir=tmp_path)
+    limits = [
+        cap
+        for cap in leaf_capabilities(agent.root_capability)
+        if isinstance(cap, ToolOutputLimits)
+    ]
+    assert len(limits) == 1
+    assert limits[0].bands == [Band(over=48_000, action=Spill(then=Truncate(max_chars=48_000)))]
+    # spills land in a dedicated subdir of the scratch dir, pruned after an hour
+    assert isinstance(limits[0].store, LocalFileStore)
+    assert limits[0].store.base_dir == tmp_path / "alertagent-spills"

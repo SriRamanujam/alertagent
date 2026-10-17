@@ -54,7 +54,11 @@ async def alertmanager_ingest(
         base_url=settings.openai_base_url, api_key=settings.openai_api_key
     )
     provider = OpenAIProvider(openai_client=client)
-    model = OpenAIChatModel(model_name=settings.model_name, provider=provider)
+    model = OpenAIChatModel(
+        model_name=settings.model_name,
+        provider=provider,
+        profile={"context_window": settings.context_size},
+    )
 
     firing = [
         a
@@ -64,5 +68,9 @@ async def alertmanager_ingest(
     ]
 
     for alert in firing:
-        task = asyncio.create_task(triage_alert(chan, alert, model))
+        task = asyncio.create_task(
+            triage_alert(
+                chan, alert, model, settings.response_timeout, settings.scratch_dir
+            )
+        )
         task.add_done_callback(lambda t, a=alert: _log_triage_failure(t, a))

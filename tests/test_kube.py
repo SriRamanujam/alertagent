@@ -1,0 +1,157 @@
+import asyncio
+from unittest import mock
+from unittest.mock import MagicMock
+
+from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.models.function import FunctionModel
+
+from kubernetes.dynamic.resource import ResourceInstance
+
+from alertagent.tools import kubernetes as kube
+from alertagent.triage import build_triage_agent
+
+
+def _client_with_resource() -> tuple[MagicMock, MagicMock]:
+    """Fake DynamicClient: client.resources.get(...) returns a resource mock."""
+    client = MagicMock()
+    resource = MagicMock()
+    client.resources.get.return_value = resource
+    return client, resource
+
+
+def _instance(client: MagicMock, payload: dict) -> ResourceInstance:
+    """Wrap a payload the way the real dynamic client does."""
+    return ResourceInstance(client, dict(payload))
+
+
+def test_get_resource_passes_args_and_returns_dict() -> None:
+    client, resource = _client_with_resource()
+    payload = {
+        "kind": "Deployment",
+        "metadata": {"name": "api", "namespace": "monitoring"},
+    }
+    resource.get.return_value = _instance(client, payload)
+
+    with mock.patch.object(kube, "_kubernetes_client", return_value=client):
+        result = kube.get_kubernetes_resource(
+            "apps/v1", "Deployment", "api", namespace="monitoring"
+        )
+
+    client.resources.get.assert_called_once_with(
+        api_version="apps/v1", kind="Deployment"
+    )
+    resource.get.assert_called_once_with(name="api", namespace="monitoring")
+    assert result == payload
+
+
+def test_get_resource_without_namespace() -> None:
+    client, resource = _client_with_resource()
+    resource.get.return_value = _instance(client, {"kind": "Namespace"})
+
+    with mock.patch.object(kube, "_kubernetes_client", return_value=client):
+        kube.get_kubernetes_resource("v1", "Namespace", "kube-system")
+
+    resource.get.assert_called_once_with(name="kube-system", namespace=None)
+
+
+def test_get_resource_subresource() -> None:
+    client, resource = _client_with_resource()
+    logs = {"kind": "Log", "message": "2026-10-17 pod log line"}
+    resource.subresources["logs"].get.return_value = _instance(client, logs)
+
+    with mock.patch.object(kube, "_kubernetes_client", return_value=client):
+        result = kube.get_kubernetes_resource(
+            "v1", "Pod", "web", namespace="monitoring", subresource="logs"
+        )
+
+    resource.subresources["logs"].get.assert_called_once_with(
+        name="web", namespace="monitoring"
+    )
+    assert result == logs
+
+
+def test_get_resource_log_subresource_returns_raw_text() -> None:
+    client, resource = _client_with_resource()
+    # The real dynamic client returns a plain string for the `log` subresource,
+    # not a ResourceInstance.
+    resource.subresources["log"].get.return_value = "line one\nline two"
+
+    with mock.patch.object(kube, "_kubernetes_client", return_value=client):
+        result = kube.get_kubernetes_resource(
+            "v1", "Pod", "web", namespace="monitoring", subresource="log"
+        )
+
+    assert result == "line one\nline two"
+
+
+def test_list_resources_returns_items() -> None:
+    client, resource = _client_with_resource()
+    items = [
+        {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "monitoring"}}
+    ]
+    resource.get.return_value = _instance(
+        client,
+        {
+            "apiVersion": "v1",
+            "kind": "NamespaceList",
+            "metadata": {"continue": "tok-2"},
+            "items": items,
+        },
+    )
+
+    with mock.patch.object(kube, "_kubernetes_client", return_value=client):
+        result = kube.list_kubernetes_resources(
+            "v1", "Namespace", namespace="monitoring"
+        )
+
+    client.resources.get.assert_called_once_with(api_version="v1", kind="Namespace")
+    # paged: the default limit is forwarded to the API
+    resource.get.assert_called_once_with(namespace="monitoring", limit=100)
+    # items are slimmed to metadata + status, and the continue token is surfaced
+    assert result == {
+        "items": [
+            {
+                "metadata": {
+                    "name": "monitoring",
+                    "namespace": None,
+                    "creationTimestamp": None,
+                    "labels": None,
+                },
+                "status": None,
+            }
+        ],
+        "continue": "tok-2",
+    }
+
+
+def test_list_resources_forwards_continue_token() -> None:
+    client, resource = _client_with_resource()
+    resource.get.return_value = _instance(
+        client, {"apiVersion": "v1", "kind": "NamespaceList", "items": []}
+    )
+
+    with mock.patch.object(kube, "_kubernetes_client", return_value=client):
+        result = kube.list_kubernetes_resources(
+            "v1", "Namespace", limit=50, continue_token="tok-2"
+        )
+
+    # the dynamic client takes the continue token as `_continue`
+    resource.get.assert_called_once_with(namespace=None, limit=50, _continue="tok-2")
+    # no `continue` in the response metadata means the last page
+    assert result == {"items": [], "continue": None}
+
+
+REQUEST: dict = {}  # captured from the fake model's request
+
+
+def fake_model(messages, agent_info):
+    REQUEST["tools"] = [t.name for t in agent_info.function_tools]
+    return ModelResponse([TextPart("ok")])
+
+
+def test_agent_registers_kubernetes_tools() -> None:
+    agent = build_triage_agent(FunctionModel(fake_model), 30)
+    asyncio.run(agent.run("firing alert"))
+    assert {"get_kubernetes_resource", "list_kubernetes_resources"} <= set(
+        REQUEST["tools"]
+    )

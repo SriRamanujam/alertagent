@@ -1,6 +1,7 @@
 TRIAGE_INSTRUCTIONS = """
 You are an experienced and compenent SRE. You are examining an OKD (based on Openshift) cluster.
-You will be given an alert that is currently firing within the cluster. Provide your best explanation
+You will be given an alert that is currently firing within the cluster. Use the tools provided
+to investigate the cluster for details. Provide your best explanation
 for what the root cause is for the alert. Output only the root cause analysis text.
 
 Structure your analysis as Markdown, with the following headings in this order:
@@ -19,13 +20,29 @@ from . import (
     COLOR_GRAY,
     DISCORD_MAX_MESSAGE_LENGTH,
 )
+from .tools.kubernetes import kubernetes_tools
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai_harness import (
+    CodeMode,
+    TieredCompaction,
+    ClearToolResults,
+    SummarizingCompaction,
+    ToolOutputLimits,
+)
+from pydantic_ai_harness.tool_output_limits import (
+    Band,
+    LocalFileStore,
+    Spill,
+    Truncate,
+)
 import discord
 import humanize
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 
 def _humanized_delta(starts_at: datetime) -> str:
@@ -71,10 +88,39 @@ def build_prompt(alert: AlertmanagerAlert) -> str:
     return "JSON payload of alert message: \n" + alert.model_dump_json()
 
 
-def build_triage_agent(model: Model) -> Agent:
+def build_triage_agent(model: Model, timeout: int, scratch_dir: Path) -> Agent:
     """Get a new agent instance"""
     return Agent(
-        model=model, name="Triage", instructions=TRIAGE_INSTRUCTIONS, output_type=str
+        model=model,
+        name="Triage",
+        instructions=TRIAGE_INSTRUCTIONS,
+        output_type=str,
+        toolsets=[kubernetes_tools],
+        # TODO: not sure if this should be set _higher_ than the server-side timeout
+        # or the exact same as the server-side timeout.
+        model_settings=ModelSettings(timeout=timeout),
+        capabilities=[
+            CodeMode(tools={"code_mode": True}),
+            # A single oversized tool return (pod logs, a big listing, code_mode
+            # stdout) survives every compaction tier, since ClearToolResults keeps
+            # the last 3 pairs. Spill the full payload to disk so the model can
+            # page it back with read_tool_result. Never point base_dir at the
+            # scratch root itself: LocalFileStore must own the dir and chmods it 0700.
+            ToolOutputLimits(
+                bands=[Band(over=48_000, action=Spill(then=Truncate(max_chars=48_000)))],
+                store=LocalFileStore(
+                    base_dir=scratch_dir / "alertagent-spills",
+                    cleanup_after=timedelta(hours=1),
+                ),
+            ),
+            TieredCompaction(
+                tiers=[
+                    ClearToolResults(keep_pairs=3, max_fraction=0.95),
+                    SummarizingCompaction(max_fraction=0.95, keep_messages=5),
+                ],
+                target_fraction=0.45,
+            ),
+        ],
     )
 
 
@@ -82,6 +128,8 @@ async def triage_alert(
     channel: discord.TextChannel | discord.Thread,
     alert: AlertmanagerAlert,
     model: Model,
+    timeout: int,
+    scratch_dir: Path,
 ) -> None:
     """
     Most of the heavy lifting of the Discord loop happens here
@@ -91,7 +139,7 @@ async def triage_alert(
     msg = await channel.send(embed=build_alert_embed(alert))
     thread = await msg.create_thread(name="Bot analysis", reason="Automated triage")
     async with thread.typing():
-        agent = build_triage_agent(model)
+        agent = build_triage_agent(model, timeout, scratch_dir)
         result = await agent.run(build_prompt(alert))
         if len(result.output) < DISCORD_MAX_MESSAGE_LENGTH:
             await thread.send(result.output)
