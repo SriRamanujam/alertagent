@@ -13,6 +13,7 @@ dependencies = [
     "fastapi>=0.143.2",
     "humanize>=4.16.0",
     "kubernetes-client>=1.0.0",
+    "mcp>=2.3.0",
     "openai>=3.31.0",
     "pydantic-ai>=2.56.0",
     "pydantic-ai-harness[codemode]>=0.56.0",

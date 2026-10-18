@@ -21,6 +21,7 @@ from . import (
     DISCORD_MAX_MESSAGE_LENGTH,
 )
 from .tools.kubernetes import kubernetes_tools
+from .tools.websearch import websearch_tools
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
@@ -95,7 +96,7 @@ def build_triage_agent(model: Model, timeout: int, scratch_dir: Path) -> Agent:
         name="Triage",
         instructions=TRIAGE_INSTRUCTIONS,
         output_type=str,
-        toolsets=[kubernetes_tools],
+        toolsets=[kubernetes_tools, websearch_tools],
         # TODO: not sure if this should be set _higher_ than the server-side timeout
         # or the exact same as the server-side timeout.
         model_settings=ModelSettings(timeout=timeout),
@@ -107,7 +108,9 @@ def build_triage_agent(model: Model, timeout: int, scratch_dir: Path) -> Agent:
             # page it back with read_tool_result. Never point base_dir at the
             # scratch root itself: LocalFileStore must own the dir and chmods it 0700.
             ToolOutputLimits(
-                bands=[Band(over=48_000, action=Spill(then=Truncate(max_chars=48_000)))],
+                bands=[
+                    Band(over=48_000, action=Spill(then=Truncate(max_chars=48_000)))
+                ],
                 store=LocalFileStore(
                     base_dir=scratch_dir / "alertagent-spills",
                     cleanup_after=timedelta(hours=1),
