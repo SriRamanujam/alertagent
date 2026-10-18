@@ -16,8 +16,19 @@ RUN uv sync --frozen --no-dev
 # run as non-root
 RUN useradd --no-create-home --uid 1000 alertagent && chown -R alertagent /app
 USER alertagent
+
+# Stop pydantic from advertising itself
 # The user has no home dir, so give uv a cache dir it can write to.
-ENV UV_CACHE_DIR=/app/.cache/uv
+ENV PYDANTIC_API_NO_BANNER=1 UV_CACHE_DIR=/app/.cache/uv
+
+# Install deps before source for layer reuse purposes:
+# --no-install-project skips the project itself, so src/ isn't needed yet
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-install-project --no-dev
+
+# Now that src/ is present, install the project (deps already satisfied)
+COPY src/ src/
+RUN uv sync --locked --no-dev
 
 EXPOSE 8000
 # --no-sync: the environment is complete at build time, so the runtime never writes into .venv.
