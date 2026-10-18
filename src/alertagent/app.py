@@ -11,9 +11,9 @@ from openai import AsyncOpenAI
 from .alertmanager import AlertmanagerAlert, AlertmanagerMessage
 from .config import Settings, get_settings
 from .session import on_startup, Discord, on_shutdown
-from .triage import triage_alert
+from .triage import triage_alert, build_alert_embed
 
-from . import ALERT_STATUS_FIRING
+from . import ALERT_STATUS_FIRING, ALERT_STATUS_RESOLVED
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,8 @@ async def alertmanager_ingest(
         and a.labels.get("alertname", "") != "Watchdog"
     ]
 
+    resolved = [a for a in message.alerts if a.status == ALERT_STATUS_RESOLVED]
+
     for alert in firing:
         task = asyncio.create_task(
             triage_alert(
@@ -74,3 +76,6 @@ async def alertmanager_ingest(
             )
         )
         task.add_done_callback(lambda t, a=alert: _log_triage_failure(t, a))
+
+    for alert in resolved:
+        await chan.send(embed=build_alert_embed(alert))
