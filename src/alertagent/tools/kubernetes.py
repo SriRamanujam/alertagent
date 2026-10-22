@@ -26,6 +26,9 @@ def get_kubernetes_resource(
     namespace: str | None = None,
 ) -> dict | str:
     """Fetch a Kubernetes resource and return it as a dict"""
+    if kind == "Secret":
+        return "Secret access is forbidden by policy."
+
     resource: ResourceInstance = _kubernetes_client().resources.get(
         api_version=api_version, kind=kind
     )
