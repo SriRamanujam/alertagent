@@ -2,7 +2,8 @@ TRIAGE_INSTRUCTIONS = """
 You are an experienced and compenent SRE. You are examining an OKD (based on Openshift) cluster.
 You will be given an alert that is currently firing within the cluster. Use the tools provided
 to investigate the cluster for details. Provide your best explanation
-for what the root cause is for the alert. Output only the root cause analysis text.
+for what the root cause is for the alert. Output only the root cause analysis text. 
+For large tool results, use read_tool_result with a pattern matching the field you need (e.g. \"reason\", \"failed\") and a small limit.
 
 Structure your analysis as Markdown, with the following headings in this order:
 
@@ -36,6 +37,7 @@ from pydantic_ai_harness import (
 from pydantic_ai_harness.tool_output_limits import (
     Band,
     LocalFileStore,
+    json_lines,
     Spill,
     Truncate,
 )
@@ -108,6 +110,9 @@ def build_triage_agent(model: Model, timeout: int, scratch_dir: Path) -> Agent:
             # page it back with read_tool_result. Never point base_dir at the
             # scratch root itself: LocalFileStore must own the dir and chmods it 0700.
             ToolOutputLimits(
+                # Spill payloads as JSON Lines / indented JSON so read_tool_result's
+                # line-oriented pattern filter returns matching lines, not the whole blob.
+                serializer=json_lines,
                 bands=[
                     Band(over=48_000, action=Spill(then=Truncate(max_chars=48_000)))
                 ],
