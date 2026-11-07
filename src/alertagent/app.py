@@ -9,6 +9,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from openai import AsyncOpenAI
 
 from .alertmanager import AlertmanagerAlert, AlertmanagerMessage
+from .cache import cache
 from .config import Settings, get_settings
 from .session import on_startup, Discord, on_shutdown
 from .triage import triage_alert, build_alert_embed
@@ -32,6 +33,8 @@ def _log_triage_failure(task: asyncio.Task, alert: AlertmanagerAlert) -> None:
 
     exc = task.exception()
     if exc is not None:
+        # forget the alert so that repeats will run triage.
+        cache.forget(alert)
         logger.exception(
             "triage failed for alert %s",
             alert.labels.get("alertname", "unknown alert"),
@@ -70,6 +73,11 @@ async def alertmanager_ingest(
     resolved = [a for a in message.alerts if a.status == ALERT_STATUS_RESOLVED]
 
     for alert in firing:
+        if cache.seen(alert):
+            logger.info(
+                f"skipping duplicate alert {alert.labels.get("alertname", "unknown alert")} (startedAt {alert.starts_at})",
+            )
+            continue
         task = asyncio.create_task(
             triage_alert(
                 chan, alert, model, settings.response_timeout, settings.scratch_dir
@@ -78,4 +86,5 @@ async def alertmanager_ingest(
         task.add_done_callback(lambda t, a=alert: _log_triage_failure(t, a))
 
     for alert in resolved:
+        cache.forget(alert)
         await chan.send(embed=build_alert_embed(alert))
