@@ -16,7 +16,7 @@ async def web_search(query: str, num_results: int = 5) -> List[str]:
     """Search the web for documentation, known issues, and guidance about an alert.
 
     query is a semantically rich description of the ideal page, not just keywords.
-    Returns a list of results. Use web_fetch to read a result's page in full if necessary.
+    Returns a list of results.
     """
     async with Client(_ENDPOINT) as client:
         result = await client.call_tool(
@@ -28,20 +28,7 @@ async def web_search(query: str, num_results: int = 5) -> List[str]:
     return [block.text for block in result.content if block.type == "text"]
 
 
-async def web_fetch(url: str) -> str:
-    """Fetch a single webpage as clean markdown.
-
-    Use after web_search when the highlights are insufficient, or to read a known
-    URL. The keyless endpoint returns one page per call, so
-    issue one call per URL.
-    """
-    async with Client(_ENDPOINT) as client:
-        result = await client.call_tool("web_fetch_exa", {"urls": [url]})
-    if result.is_error:
-        raise ToolFailed(_result_text(result.content))
-    return _result_text(result.content)
-
-
-websearch_tools = FunctionToolset(tools=[web_search, web_fetch]).with_metadata(
-    code_mode=True
-)
+# No web_fetch on purpose: alert annotations are untrusted input, and fetching an
+# arbitrary URL would let them steer cluster data (pod env vars, configmaps) to an
+# attacker-controlled host. Search keeps the documentation value without the leak.
+websearch_tools = FunctionToolset(tools=[web_search]).with_metadata(code_mode=True)

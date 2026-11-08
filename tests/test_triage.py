@@ -7,6 +7,7 @@ from pydantic_ai_harness import ToolOutputLimits
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, Truncate
 
 from alertagent.alertmanager import AlertmanagerAlert
+from alertagent.tools.websearch import websearch_tools
 from alertagent.triage import TRIAGE_INSTRUCTIONS, build_prompt, build_triage_agent
 
 # same path FastAPI takes on the webhook body, so the fixture matches production input
@@ -54,6 +55,13 @@ def test_agent_run_with_function_model(tmp_path) -> None:
     # (pydantic-ai strips leading/trailing whitespace from instructions)
     assert REQUEST["instructions"].strip() == TRIAGE_INSTRUCTIONS.strip()
     assert result.output == ANALYSIS
+
+
+def test_websearch_toolset_exposes_search_only() -> None:
+    # no web_fetch: alert annotations are untrusted input, and fetching an
+    # attacker-chosen URL would exfiltrate readable cluster data to the web
+    # (websearch_tools is the FunctionToolset wrapped in a metadata wrapper)
+    assert set(websearch_tools.wrapped.tools) == {"web_search"}
 
 
 def test_agent_wires_tool_output_limits(tmp_path) -> None:
