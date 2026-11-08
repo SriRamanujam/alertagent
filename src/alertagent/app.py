@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 # don't overload the inference endpoint. Extra triages queue on the semaphore instead.
 _triage_semaphore = asyncio.Semaphore(3)
 
+# The event loop only keeps weak references to tasks; hold in-flight triage tasks
+# so a burst of GC (e.g. during LLM traffic) cannot destroy one mid-execution.
+_pending_triages: set[asyncio.Task] = set()
+
 app = FastAPI(on_startup=[on_startup], on_shutdown=[on_shutdown])
 
 
@@ -38,14 +42,16 @@ def _log_triage_failure(task: asyncio.Task, alert: AlertmanagerAlert) -> None:
         return
 
     exc = task.exception()
-    if exc is not None:
-        # forget the alert so that repeats will run triage.
-        cache.forget(alert)
-        logger.exception(
-            "triage failed for alert %s",
-            alert.labels.get("alertname", "unknown alert"),
-            exc_info=exc,
-        )
+    if exc is None:
+        return
+
+    # forget the alert so that repeats will re-run triage.
+    cache.forget(alert)
+    logger.exception(
+        "triage failed for alert %s",
+        alert.labels.get("alertname", "unknown alert"),
+        exc_info=exc,
+    )
 
 
 @app.post("/", status_code=204)
@@ -81,7 +87,10 @@ async def alertmanager_ingest(
                 chan, alert, model, settings.response_timeout, settings.scratch_dir
             )
         )
-        task.add_done_callback(lambda t, a=alert: _log_triage_failure(t, a))
+        _pending_triages.add(task)
+        task.add_done_callback(
+            lambda t, a=alert: (_pending_triages.discard(t), _log_triage_failure(t, a))
+        )
 
     for alert in resolved:
         cache.forget(alert)

@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import gc
 from typing import Any, cast
 
 import discord
@@ -57,6 +58,9 @@ def wired(monkeypatch) -> dict:
     # fresh per test: the real semaphore binds to whichever event loop first
     # touches it, and each test below runs its own loop
     monkeypatch.setattr(app_module, "_triage_semaphore", asyncio.Semaphore(3))
+    # fresh per test, same as the semaphore: a done callback from a previous
+    # test's loop must not leave tasks registered against this test's set
+    monkeypatch.setattr(app_module, "_pending_triages", set())
     monkeypatch.setattr(Discord, "get_client", classmethod(lambda cls: FakeBot()))
     # fake settings passed straight through the endpoint, so tests never read
     # real credentials and no module-level get_settings patching is needed
@@ -163,6 +167,37 @@ def test_triage_concurrency_is_capped(wired, monkeypatch) -> None:
     asyncio.run(scenario())
     assert running["peak"] == 3  # exactly 3 ran at once, 2 waited on the semaphore
     assert len(wired["triaged"]) == 5  # queued alerts still got triaged
+
+
+def test_in_flight_triage_task_survives_gc(wired, monkeypatch) -> None:
+    # the event loop keeps only weak references to tasks: under GC pressure
+    # (LLM traffic during an outage burst) an unreferenced triage task can be
+    # collected mid-execution, leaving the alert without analysis or retry.
+    # The module-level set must hold the task until its done callback fires.
+    release = asyncio.Event()
+
+    async def parked_triage(channel, alert, model, timeout, scratch_dir):
+        await release.wait()
+        wired["triaged"].append(alert)
+
+    monkeypatch.setattr(app_module, "triage_alert", parked_triage)
+
+    async def scenario():
+        settings = wired["settings"]
+        await app_module.alertmanager_ingest(
+            AlertmanagerMessage.model_validate(FIRING_MESSAGE), settings
+        )
+        await asyncio.sleep(0)  # let the triage task start and park on `release`
+        assert len(app_module._pending_triages) == 1
+        gc.collect()  # would reclaim the task without the strong reference
+        assert len(app_module._pending_triages) == 1
+        release.set()
+        await asyncio.sleep(0)  # let the parked task finish
+        await asyncio.sleep(0)  # let its done callback (scheduled via call_soon) drain the set
+        assert len(app_module._pending_triages) == 0
+
+    asyncio.run(scenario())
+    assert len(wired["triaged"]) == 1
 
 
 def test_failed_triage_retries_on_resend(wired, monkeypatch) -> None:
