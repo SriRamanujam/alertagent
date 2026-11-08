@@ -59,7 +59,7 @@ async def alertmanager_ingest(
             status_code=500, detail="configured Discord channel is not a text channel"
         )
 
-    model = Model.get()
+    model = Model.get(settings)
 
     firing = [
         a

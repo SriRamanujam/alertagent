@@ -4,7 +4,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from openai import AsyncOpenAI
 
-from ..config import get_settings
+from ..config import Settings
 
 
 class Model:
@@ -12,14 +12,13 @@ class Model:
     _model: Optional[OpenAIChatModel] = None
 
     @classmethod
-    def get(cls) -> OpenAIChatModel:
+    def get(cls, settings: Settings) -> OpenAIChatModel:
         """
         Lazily initializes and returns usable model connection
         """
         if cls._model is not None:
             return cls._model
 
-        settings = get_settings()
         if cls._client is None:
             cls._client = AsyncOpenAI(
                 base_url=settings.openai_base_url, api_key=settings.openai_api_key

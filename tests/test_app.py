@@ -8,7 +8,6 @@ import discord
 import pytest
 
 import alertagent.app as app_module
-import alertagent.integrations.model as model_module
 from alertagent.alertmanager import AlertmanagerMessage
 from alertagent.cache import AlertCache
 from alertagent.config import Settings
@@ -59,16 +58,19 @@ def wired(monkeypatch) -> dict:
     # touches it, and each test below runs its own loop
     monkeypatch.setattr(app_module, "_triage_semaphore", asyncio.Semaphore(3))
     monkeypatch.setattr(Discord, "get_client", classmethod(lambda cls: FakeBot()))
-    # Model.get() reads settings from integrations.model, not app; patch both
-    # so tests never touch real credentials
+    # fake settings passed straight through the endpoint, so tests never read
+    # real credentials and no module-level get_settings patching is needed
     settings = Settings(discord_bot_token="t", discord_channel_id=1, openai_api_key="k")
-    monkeypatch.setattr(app_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(model_module, "get_settings", lambda: settings)
-    return {"cache": cache, "channel": channel, "triaged": triaged}
+    return {
+        "cache": cache,
+        "channel": channel,
+        "triaged": triaged,
+        "settings": settings,
+    }
 
 
 def ingest(wired: dict, payload: dict) -> None:
-    settings = app_module.get_settings()
+    settings = wired["settings"]
     asyncio.run(
         app_module.alertmanager_ingest(
             AlertmanagerMessage.model_validate(payload), settings
@@ -81,11 +83,11 @@ def test_model_is_built_once_and_closed(wired, monkeypatch) -> None:
     # closed on shutdown, rebuilt after close
     monkeypatch.setattr(Model, "_client", None)
     monkeypatch.setattr(Model, "_model", None)
-    m1 = Model.get()
-    assert Model.get() is m1
+    m1 = Model.get(wired["settings"])
+    assert Model.get(wired["settings"]) is m1
     asyncio.run(Model.on_shutdown())
     assert Model._client is None and Model._model is None
-    m2 = Model.get()
+    m2 = Model.get(wired["settings"])
     assert m2 is not m1
     asyncio.run(Model.on_shutdown())  # leave clean
 
@@ -148,7 +150,7 @@ def test_triage_concurrency_is_capped(wired, monkeypatch) -> None:
     ]
 
     async def scenario():
-        settings = app_module.get_settings()
+        settings = wired["settings"]
         await app_module.alertmanager_ingest(
             AlertmanagerMessage.model_validate(burst), settings
         )
