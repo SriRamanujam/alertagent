@@ -8,7 +8,7 @@ from typing import Annotated
 from .alertmanager import AlertmanagerAlert, AlertmanagerMessage
 from .cache import cache
 from .config import Settings, get_settings
-from .session import on_startup, Discord, on_shutdown, Model
+from .integrations import on_startup, Discord, on_shutdown, Model
 from .triage import triage_alert, build_alert_embed
 
 from . import ALERT_STATUS_FIRING, ALERT_STATUS_RESOLVED

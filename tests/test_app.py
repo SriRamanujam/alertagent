@@ -8,11 +8,11 @@ import discord
 import pytest
 
 import alertagent.app as app_module
-import alertagent.session as session_module
+import alertagent.integrations.model as model_module
 from alertagent.alertmanager import AlertmanagerMessage
 from alertagent.cache import AlertCache
 from alertagent.config import Settings
-from alertagent.session import Discord, Model
+from alertagent.integrations import Discord, Model
 from fixtures import (
     FIRING_ALERT,
     FIRING_MESSAGE,
@@ -59,13 +59,11 @@ def wired(monkeypatch) -> dict:
     # touches it, and each test below runs its own loop
     monkeypatch.setattr(app_module, "_triage_semaphore", asyncio.Semaphore(3))
     monkeypatch.setattr(Discord, "get_client", classmethod(lambda cls: FakeBot()))
-    # Model.get() reads settings from session, not app; patch both so tests
-    # never touch real credentials
-    settings = Settings(
-        discord_bot_token="t", discord_channel_id=1, openai_api_key="k"
-    )
+    # Model.get() reads settings from integrations.model, not app; patch both
+    # so tests never touch real credentials
+    settings = Settings(discord_bot_token="t", discord_channel_id=1, openai_api_key="k")
     monkeypatch.setattr(app_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(session_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(model_module, "get_settings", lambda: settings)
     return {"cache": cache, "channel": channel, "triaged": triaged}
 
 
