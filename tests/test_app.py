@@ -8,10 +8,11 @@ import discord
 import pytest
 
 import alertagent.app as app_module
+import alertagent.session as session_module
 from alertagent.alertmanager import AlertmanagerMessage
 from alertagent.cache import AlertCache
 from alertagent.config import Settings
-from alertagent.session import Discord
+from alertagent.session import Discord, Model
 from fixtures import (
     FIRING_ALERT,
     FIRING_MESSAGE,
@@ -58,13 +59,13 @@ def wired(monkeypatch) -> dict:
     # touches it, and each test below runs its own loop
     monkeypatch.setattr(app_module, "_triage_semaphore", asyncio.Semaphore(3))
     monkeypatch.setattr(Discord, "get_client", classmethod(lambda cls: FakeBot()))
-    monkeypatch.setattr(
-        app_module,
-        "get_settings",
-        lambda: Settings(
-            discord_bot_token="t", discord_channel_id=1, openai_api_key="k"
-        ),
+    # Model.get() reads settings from session, not app; patch both so tests
+    # never touch real credentials
+    settings = Settings(
+        discord_bot_token="t", discord_channel_id=1, openai_api_key="k"
     )
+    monkeypatch.setattr(app_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(session_module, "get_settings", lambda: settings)
     return {"cache": cache, "channel": channel, "triaged": triaged}
 
 
@@ -75,6 +76,20 @@ def ingest(wired: dict, payload: dict) -> None:
             AlertmanagerMessage.model_validate(payload), settings
         )
     )
+
+
+def test_model_is_built_once_and_closed(wired, monkeypatch) -> None:
+    # the OpenAI client is a process-wide singleton: one httpx session,
+    # closed on shutdown, rebuilt after close
+    monkeypatch.setattr(Model, "_client", None)
+    monkeypatch.setattr(Model, "_model", None)
+    m1 = Model.get()
+    assert Model.get() is m1
+    asyncio.run(Model.on_shutdown())
+    assert Model._client is None and Model._model is None
+    m2 = Model.get()
+    assert m2 is not m1
+    asyncio.run(Model.on_shutdown())  # leave clean
 
 
 def test_firing_resend_is_ignored(wired) -> None:

@@ -4,14 +4,11 @@ import logging
 import discord
 from fastapi import FastAPI, Depends, HTTPException
 from typing import Annotated
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
-from openai import AsyncOpenAI
 
 from .alertmanager import AlertmanagerAlert, AlertmanagerMessage
 from .cache import cache
 from .config import Settings, get_settings
-from .session import on_startup, Discord, on_shutdown
+from .session import on_startup, Discord, on_shutdown, Model
 from .triage import triage_alert, build_alert_embed
 
 from . import ALERT_STATUS_FIRING, ALERT_STATUS_RESOLVED
@@ -62,15 +59,7 @@ async def alertmanager_ingest(
             status_code=500, detail="configured Discord channel is not a text channel"
         )
 
-    client = AsyncOpenAI(
-        base_url=settings.openai_base_url, api_key=settings.openai_api_key
-    )
-    provider = OpenAIProvider(openai_client=client)
-    model = OpenAIChatModel(
-        model_name=settings.model_name,
-        provider=provider,
-        profile={"context_window": settings.context_size},
-    )
+    model = Model.get()
 
     firing = [
         a
