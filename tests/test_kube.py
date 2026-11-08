@@ -54,34 +54,34 @@ def test_get_resource_without_namespace() -> None:
     resource.get.assert_called_once_with(name="kube-system", namespace=None)
 
 
-def test_get_resource_subresource() -> None:
+def test_get_pod_logs_without_container() -> None:
     client, resource = _client_with_resource()
-    logs = {"kind": "Log", "message": "2026-10-17 pod log line"}
-    resource.subresources["logs"].get.return_value = _instance(client, logs)
-
-    with mock.patch.object(kube, "_kubernetes_client", return_value=client):
-        result = kube.get_kubernetes_resource(
-            "v1", "Pod", "web", namespace="monitoring", subresource="logs"
-        )
-
-    resource.subresources["logs"].get.assert_called_once_with(
-        name="web", namespace="monitoring"
-    )
-    assert result == logs
-
-
-def test_get_resource_log_subresource_returns_raw_text() -> None:
-    client, resource = _client_with_resource()
-    # The real dynamic client returns a plain string for the `log` subresource,
-    # not a ResourceInstance.
+    # The real dynamic client returns a plain string for the `log` subresource.
     resource.subresources["log"].get.return_value = "line one\nline two"
 
     with mock.patch.object(kube, "_kubernetes_client", return_value=client):
-        result = kube.get_kubernetes_resource(
-            "v1", "Pod", "web", namespace="monitoring", subresource="log"
-        )
+        result = kube.get_pod_logs("monitoring", "web")
 
+    client.resources.get.assert_called_once_with(api_version="v1", kind="Pod")
+    # single-container pod: no container query param
+    resource.subresources["log"].get.assert_called_once_with(
+        name="web", namespace="monitoring", query_params=[]
+    )
     assert result == "line one\nline two"
+
+
+def test_get_pod_logs_with_container() -> None:
+    client, resource = _client_with_resource()
+    resource.subresources["log"].get.return_value = "sidecar line"
+
+    with mock.patch.object(kube, "_kubernetes_client", return_value=client):
+        result = kube.get_pod_logs("monitoring", "web", container="sidecar")
+
+    # the dynamic client only forwards recognized kwargs, so container goes as a query param
+    resource.subresources["log"].get.assert_called_once_with(
+        name="web", namespace="monitoring", query_params=[("container", "sidecar")]
+    )
+    assert result == "sidecar line"
 
 
 def test_list_resources_returns_items() -> None:
@@ -141,17 +141,14 @@ def test_list_resources_forwards_continue_token() -> None:
     assert result == {"items": [], "continue": None}
 
 
-REQUEST: dict = {}  # captured from the fake model's request
-
-
 def fake_model(messages, agent_info):
-    REQUEST["tools"] = [t.name for t in agent_info.function_tools]
     return ModelResponse([TextPart("ok")])
 
 
-def test_agent_registers_kubernetes_tools() -> None:
-    agent = build_triage_agent(FunctionModel(fake_model), 30)
+def test_agent_registers_kubernetes_tools(tmp_path) -> None:
+    agent = build_triage_agent(FunctionModel(fake_model), 30, scratch_dir=tmp_path)
     asyncio.run(agent.run("firing alert"))
-    assert {"get_kubernetes_resource", "list_kubernetes_resources"} <= set(
-        REQUEST["tools"]
-    )
+    # CodeMode(tools={"code_mode": True}) absorbs the kubernetes toolset into
+    # the run_code sandbox, so the individual functions never appear as native
+    # tools -- assert the toolset itself is registered on the agent instead.
+    assert kube.kubernetes_tools in agent.toolsets
