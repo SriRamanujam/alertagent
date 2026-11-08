@@ -18,12 +18,21 @@ from . import ALERT_STATUS_FIRING, ALERT_STATUS_RESOLVED
 
 logger = logging.getLogger(__name__)
 
+# Cap on concurrent LLM triage sessions so that many alerts coming at once
+# don't overload the inference endpoint. Extra triages queue on the semaphore instead.
+_triage_semaphore = asyncio.Semaphore(3)
+
 app = FastAPI(on_startup=[on_startup], on_shutdown=[on_shutdown])
 
 
 @app.get("/")
 def root() -> dict[str, str]:
     return {"message": "Hello from alertagent!"}
+
+
+async def _run_triage(chan, alert, model, timeout, scratch_dir) -> None:
+    async with _triage_semaphore:
+        await triage_alert(chan, alert, model, timeout, scratch_dir)
 
 
 def _log_triage_failure(task: asyncio.Task, alert: AlertmanagerAlert) -> None:
@@ -79,7 +88,7 @@ async def alertmanager_ingest(
             )
             continue
         task = asyncio.create_task(
-            triage_alert(
+            _run_triage(
                 chan, alert, model, settings.response_timeout, settings.scratch_dir
             )
         )

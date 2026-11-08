@@ -1,6 +1,7 @@
 """Endpoint-level dedup: resend of a firing alert must not re-post or re-triage."""
 
 import asyncio
+import copy
 from typing import Any, cast
 
 import discord
@@ -12,6 +13,7 @@ from alertagent.cache import AlertCache
 from alertagent.config import Settings
 from alertagent.session import Discord
 from fixtures import (
+    FIRING_ALERT,
     FIRING_MESSAGE,
     RESOLVED_MESSAGE,
     WATCHDOG_MESSAGE,
@@ -52,6 +54,9 @@ def wired(monkeypatch) -> dict:
 
     monkeypatch.setattr(app_module, "cache", cache)
     monkeypatch.setattr(app_module, "triage_alert", fake_triage)
+    # fresh per test: the real semaphore binds to whichever event loop first
+    # touches it, and each test below runs its own loop
+    monkeypatch.setattr(app_module, "_triage_semaphore", asyncio.Semaphore(3))
     monkeypatch.setattr(Discord, "get_client", classmethod(lambda cls: FakeBot()))
     monkeypatch.setattr(
         app_module,
@@ -106,6 +111,43 @@ def test_watchdog_is_ignored_and_never_triaged(wired) -> None:
     # a real firing alert is still triaged afterwards
     ingest(wired, FIRING_MESSAGE)
     assert len(wired["triaged"]) == 1
+
+
+def test_triage_concurrency_is_capped(wired, monkeypatch) -> None:
+    # a burst of distinct alerts must not all hit the LLM endpoint at once;
+    # the extras queue on the semaphore and still run
+    running = {"n": 0, "peak": 0}
+    release = asyncio.Event()
+
+    async def slow_triage(channel, alert, model, timeout, scratch_dir):
+        running["n"] += 1
+        running["peak"] = max(running["peak"], running["n"])
+        await release.wait()
+        running["n"] -= 1
+        wired["triaged"].append(alert)
+
+    monkeypatch.setattr(app_module, "triage_alert", slow_triage)
+
+    burst = copy.deepcopy(FIRING_MESSAGE)
+    burst["alerts"] = [
+        {**FIRING_ALERT, "labels": {**FIRING_ALERT["labels"], "alertname": f"Burst{i}"}}
+        for i in range(5)
+    ]
+
+    async def scenario():
+        settings = app_module.get_settings()
+        await app_module.alertmanager_ingest(
+            AlertmanagerMessage.model_validate(burst), settings
+        )
+        await asyncio.sleep(0)  # let all 5 triage tasks start
+        assert running["peak"] <= 3
+        release.set()
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        await asyncio.gather(*pending)
+
+    asyncio.run(scenario())
+    assert running["peak"] == 3  # exactly 3 ran at once, 2 waited on the semaphore
+    assert len(wired["triaged"]) == 5  # queued alerts still got triaged
 
 
 def test_failed_triage_retries_on_resend(wired, monkeypatch) -> None:
