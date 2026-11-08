@@ -44,8 +44,32 @@ from pydantic_ai_harness.tool_output_limits import (
 import discord
 import humanize
 import io
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+def _chunk(text: str, limit: int) -> list[str]:
+    """Split text into chunks of at most `limit` chars, breaking on line
+    boundaries where possible so a Markdown heading isn't split mid-line.
+    A single line longer than the limit is hard-split."""
+    # Phase 1: break every line into pieces that fit within the limit.
+    pieces: list[str] = []
+    for line in text.splitlines(keepends=True):
+        pieces.extend(line[i : i + limit] for i in range(0, len(line), limit))
+    # Phase 2: greedily pack whole pieces into chunks of at most `limit` chars.
+    chunks: list[str] = []
+    current = ""
+    for piece in pieces:
+        if current and len(current) + len(piece) > limit:
+            chunks.append(current)
+            current = ""
+        current += piece
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def _humanized_delta(starts_at: datetime) -> str:
@@ -157,5 +181,16 @@ async def triage_alert(
             )
             try:
                 await thread.send(file=file)
-            except Exception as e:
-                print(f"exception when uploading file to Discord: {e}")
+            except (discord.DiscordException, OSError) as e:
+                logger.warning(
+                    "analysis file upload failed (%s: %s); sending analysis as text",
+                    type(e).__name__,
+                    e,
+                    exc_info=e,
+                )
+                await thread.send(
+                    "Couldn't upload the analysis as a file; the full "
+                    "analysis follows as text below."
+                )
+                for chunk in _chunk(result.output, DISCORD_MAX_MESSAGE_LENGTH):
+                    await thread.send(chunk)
