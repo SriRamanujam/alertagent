@@ -24,7 +24,7 @@ from . import (
 from .tools.kubernetes import kubernetes_tools
 from .tools.websearch import websearch_tools
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, UsageLimits
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness import (
@@ -172,7 +172,9 @@ async def triage_alert(
     thread = await msg.create_thread(name="Bot analysis", reason="Automated triage")
     async with thread.typing():
         agent = build_triage_agent(model, timeout, scratch_dir)
-        result = await agent.run(build_prompt(alert))
+        result = await agent.run(
+            build_prompt(alert), usage_limits=UsageLimits(request_limit=200)
+        )
         if len(result.output) < DISCORD_MAX_MESSAGE_LENGTH:
             await thread.send(result.output)
         else:
