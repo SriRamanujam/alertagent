@@ -63,9 +63,10 @@ def test_get_pod_logs_without_container() -> None:
         result = kube.get_pod_logs("monitoring", "web")
 
     client.resources.get.assert_called_once_with(api_version="v1", kind="Pod")
-    # single-container pod: no container query param
+    # single-container pod: no container query param, but the default tail is always sent
+    # so the model can never pull an unbounded log
     resource.subresources["log"].get.assert_called_once_with(
-        name="web", namespace="monitoring", query_params=[]
+        name="web", namespace="monitoring", query_params=[("tailLines", 200)]
     )
     assert result == "line one\nline two"
 
@@ -77,11 +78,26 @@ def test_get_pod_logs_with_container() -> None:
     with mock.patch.object(kube, "_kubernetes_client", return_value=client):
         result = kube.get_pod_logs("monitoring", "web", container="sidecar")
 
-    # the dynamic client only forwards recognized kwargs, so container goes as a query param
+    # the dynamic client only forwards recognized kwargs, so container and
+    # tailLines go as query params
     resource.subresources["log"].get.assert_called_once_with(
-        name="web", namespace="monitoring", query_params=[("container", "sidecar")]
+        name="web",
+        namespace="monitoring",
+        query_params=[("tailLines", 200), ("container", "sidecar")],
     )
     assert result == "sidecar line"
+
+
+def test_get_pod_logs_custom_tail() -> None:
+    client, resource = _client_with_resource()
+    resource.subresources["log"].get.return_value = ""
+
+    with mock.patch.object(kube, "_kubernetes_client", return_value=client):
+        kube.get_pod_logs("monitoring", "web", tail_lines=50)
+
+    resource.subresources["log"].get.assert_called_once_with(
+        name="web", namespace="monitoring", query_params=[("tailLines", 50)]
+    )
 
 
 def test_list_resources_returns_items() -> None:

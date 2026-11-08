@@ -4,6 +4,7 @@ You will be given an alert that is currently firing within the cluster. Use the 
 to investigate the cluster for details. Provide your best explanation
 for what the root cause is for the alert. Output only the root cause analysis text. 
 For large tool results, use read_tool_result with a pattern matching the field you need (e.g. \"reason\", \"failed\") and a small limit.
+Pod logs are plain text, not JSON: read them as text, do not run them through json.loads.
 
 Structure your analysis as Markdown, with the following headings in this order:
 

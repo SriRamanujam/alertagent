@@ -87,8 +87,16 @@ def _get_pod_subresource(subresource: str) -> Subresource:
     )
 
 
-def get_pod_logs(namespace: str, name: str, container: str | None = None) -> str:
-    """Get the logs for a container of the given pod.
+def get_pod_logs(
+    namespace: str,
+    name: str,
+    container: str | None = None,
+    tail_lines: int = 200,
+) -> str:
+    """Get recent logs for a container of the given pod.
+
+    Returns at most the last `tail_lines` lines (default 200); pass a larger
+    value for more history. Logs are plain text, not JSON.
 
     container is required for pods with multiple containers (any container
     on the pod, including init containers); it may be omitted for
@@ -97,8 +105,10 @@ def get_pod_logs(namespace: str, name: str, container: str | None = None) -> str
     logs = _get_pod_subresource("log")
 
     # The dynamic client only forwards recognized kwargs, so pass container
-    # as an explicit query param.
-    query_params = [("container", container)] if container else []
+    # and tailLines as explicit query params.
+    query_params: list[tuple[str, str | int]] = [("tailLines", tail_lines)]
+    if container:
+        query_params.append(("container", container))
 
     return logs.get(name=name, namespace=namespace, query_params=query_params)
 
