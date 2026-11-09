@@ -42,6 +42,17 @@ from pydantic_ai_harness.tool_output_limits import (
     Spill,
     Truncate,
 )
+from pydantic_ai.exceptions import (
+    UsageLimitExceeded,
+    ModelHTTPError,
+    ModelAPIError,
+    UnexpectedModelBehavior,
+    IncompleteToolCall,
+    ContentFilterError,
+    RunCancelled,
+    UserError,
+)
+from asyncio import CancelledError, sleep
 import discord
 import humanize
 import io
@@ -157,6 +168,88 @@ def build_triage_agent(model: Model, timeout: int, scratch_dir: Path) -> Agent:
     )
 
 
+def _recovery_for(exc: Exception) -> tuple[str, bool]:
+    """Map a failed agent run to (message to post to the thread, retry once).
+
+    Retry is only for failures a fresh run can plausibly fix: transient
+    transport/endpoint problems and unusable model output (fresh sampling).
+    Misconfiguration and loop-burned runs fail identically on retry, so they
+    abort with an actionable message instead.
+    """
+    if isinstance(exc, ModelHTTPError):
+        if exc.status_code in (401, 403):
+            return (
+                f"Bot misconfigured: the model rejected its API key (HTTP {exc.status_code}). Check the model credentials.",
+                False,
+            )
+        if exc.status_code == 404:
+            suggestion = (
+                f" Did you mean {exc.suggested_model_id!r}?"
+                if exc.suggested_model_id
+                else ""
+            )
+            return (
+                f"Bot misconfigured: model {exc.model_name!r} not found (HTTP 404).{suggestion}",
+                False,
+            )
+        if exc.status_code < 500 and exc.status_code not in (408, 429):
+            return (
+                f"Bot misconfigured: the model rejected the request (HTTP {exc.status_code}): {str(exc)[:300]}",
+                False,
+            )
+        return f"inference endpoint unavailable (HTTP {exc.status_code})", True
+    if isinstance(exc, ModelAPIError):
+        return (
+            "could not reach the inference endpoint (timeout or connection failure)",
+            True,
+        )
+    if isinstance(exc, IncompleteToolCall):
+        return (
+            "Bot misconfigured: the model's output was cut off mid-tool-call. Raise the model's max_tokens.",
+            False,
+        )
+    if isinstance(exc, ContentFilterError):
+        return "Analysis blocked by the provider's safety filter.", False
+    if isinstance(exc, UnexpectedModelBehavior):
+        message = str(exc)
+        if "exceeded max retries count" in message:
+            return (
+                "Analysis aborted: a tool kept failing and its retry budget was exhausted. Check the failing tool (cluster API, websearch).",
+                False,
+            )
+        if "exceeded before any response was generated" in message:
+            return (
+                "Bot misconfigured: the model's token limit is too small for triage. Raise the model's max_tokens.",
+                False,
+            )
+        return "the model returned an unusable response", True
+    if isinstance(exc, UsageLimitExceeded):
+        return (
+            "Analysis aborted after 200 model requests \u2014 the model appears stuck in a tool loop. "
+            "Check cluster API reachability and websearch health.",
+            False,
+        )
+    if isinstance(exc, RunCancelled):
+        return "Analysis cancelled.", False
+    if isinstance(exc, UserError):
+        return f"Bot misconfigured (developer error): {str(exc)[:300]}", False
+    if isinstance(exc, OSError):
+        return "a tool's file I/O failed (spilled file missing or disk error)", True
+    return f"{type(exc).__name__}: {str(exc)[:300]}", False
+
+
+def _backoff(exc: Exception) -> float:
+    """Seconds to wait before retrying a failed run: the provider's
+    Retry-After when present, else a fixed 5s. Capped at 30s so a quota-reset
+    header can't hold a triage semaphore slot for minutes."""
+    if isinstance(exc, ModelHTTPError) and exc.headers:
+        try:
+            return min(max(float(exc.headers["retry-after"]), 0.0), 30.0)
+        except KeyError, ValueError:
+            pass
+    return 5.0
+
+
 async def triage_alert(
     channel: discord.TextChannel | discord.Thread,
     alert: AlertmanagerAlert,
@@ -173,9 +266,40 @@ async def triage_alert(
     thread = await msg.create_thread(name="Bot analysis", reason="Automated triage")
     async with thread.typing():
         agent = build_triage_agent(model, timeout, scratch_dir)
-        result = await agent.run(
-            build_prompt(alert), usage_limits=UsageLimits(request_limit=200)
-        )
+        usage_limits = UsageLimits(request_limit=200)
+        prompt = build_prompt(alert)
+
+        try:
+            result = await agent.run(prompt, usage_limits=usage_limits)
+        except CancelledError:
+            raise
+        except (
+            ModelHTTPError,
+            ModelAPIError,
+            UnexpectedModelBehavior,
+            IncompleteToolCall,
+            ContentFilterError,
+            UsageLimitExceeded,
+            RunCancelled,
+            UserError,
+            OSError,
+        ) as exc:
+            message, retry = _recovery_for(exc)
+            if retry:
+                await sleep(_backoff(exc))  # NB: this is asyncio's sleep
+                try:
+                    result = await agent.run(prompt, usage_limits=usage_limits)
+                except Exception as second:
+                    message, _ = _recovery_for(second)
+                    await thread.send(f"Analysis failed: {message}")
+                    raise
+            else:
+                await thread.send(message)
+                raise
+        except Exception:
+            await thread.send("Analysis failed with an unexpected error.")
+            raise
+
         if len(result.output) < DISCORD_MAX_MESSAGE_LENGTH:
             await thread.send(result.output)
         else:

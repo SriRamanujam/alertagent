@@ -11,6 +11,8 @@ python.uv_venv_auto = "create|source"
 dev = "uv run uvicorn alertagent.app:app --reload --port 8000"
 lint = "uv run black src/"
 
+test = "uv run pytest"
+
 [env]
 ALERTAGENT_DISCORD_BOT_TOKEN = { required = "Create a mise.local.toml and set this to your bot's token." }
 ALERTAGENT_DISCORD_CHANNEL_ID = { required = "Copy the channel ID from Discord." }
