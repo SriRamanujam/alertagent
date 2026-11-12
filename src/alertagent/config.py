@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -11,6 +12,9 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     model_name: str = "gpt-5-mini"
     openai_api_key: str
+
+    min_triage_severity: Literal["info", "warning", "critical"] = "warning"
+    """Lowest severity the agent triages. Lower-severity alerts are posted to the channel without triage."""
 
     response_timeout: int = 300
     """Timeout in seconds before the agent retries a request."""

@@ -20,3 +20,10 @@ SEVERITY_COLORS = {
     "warning": COLOR_YELLOW,
     "info": COLOR_BLUE,
 }
+
+# Ordered by escalating severity.
+SEVERITY_RANK = {
+    "info": 0,
+    "warning": 1,
+    "critical": 2,
+}

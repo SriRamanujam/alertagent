@@ -82,6 +82,16 @@ def ingest(wired: dict, payload: dict) -> None:
     )
 
 
+def with_severity(severity: str | None) -> dict:
+    """A firing copy of FIRING_MESSAGE with the alert's severity label set (or dropped)."""
+    labels = dict(FIRING_ALERT["labels"])
+    if severity is None:
+        labels.pop("severity")
+    else:
+        labels["severity"] = severity
+    return clone_message(FIRING_MESSAGE, labels=labels)
+
+
 def test_model_is_built_once_and_closed(wired, monkeypatch) -> None:
     # the OpenAI client is a process-wide singleton: one httpx session,
     # closed on shutdown, rebuilt after close
@@ -193,7 +203,9 @@ def test_in_flight_triage_task_survives_gc(wired, monkeypatch) -> None:
         assert len(app_module._pending_triages) == 1
         release.set()
         await asyncio.sleep(0)  # let the parked task finish
-        await asyncio.sleep(0)  # let its done callback (scheduled via call_soon) drain the set
+        await asyncio.sleep(
+            0
+        )  # let its done callback (scheduled via call_soon) drain the set
         assert len(app_module._pending_triages) == 0
 
     asyncio.run(scenario())
@@ -215,3 +227,33 @@ def test_failed_triage_retries_on_resend(wired, monkeypatch) -> None:
     assert len(wired["triaged"]) == 0
     ingest(wired, FIRING_MESSAGE)  # resend must retry the triage
     assert len(wired["triaged"]) == 1
+
+
+def test_below_min_severity_is_posted_not_triaged(wired) -> None:
+    # default threshold is "warning", so an info alert is posted to the
+    # channel but never sent to the agent
+    info = with_severity("info")
+    ingest(wired, info)
+    assert len(wired["triaged"]) == 0
+    assert len(wired["channel"].sent_embeds) == 1
+    ingest(wired, info)  # repeat_interval resend must not re-post
+    assert len(wired["triaged"]) == 0
+    assert len(wired["channel"].sent_embeds) == 1
+
+
+def test_min_severity_threshold_is_configurable(wired) -> None:
+    wired["settings"].min_triage_severity = "critical"
+    ingest(wired, with_severity("info"))
+    ingest(wired, with_severity("warning"))
+    assert len(wired["triaged"]) == 0
+    assert len(wired["channel"].sent_embeds) == 2  # both still posted
+    ingest(wired, FIRING_MESSAGE)  # critical is at the threshold: triaged
+    assert len(wired["triaged"]) == 1
+
+
+def test_alert_without_severity_label_is_still_triaged(wired) -> None:
+    # an unrankable severity can't be "below the threshold", so it keeps the
+    # legacy behavior: triaged, never silently dropped
+    ingest(wired, with_severity(None))
+    assert len(wired["triaged"]) == 1
+    assert len(wired["channel"].sent_embeds) == 0  # triage posts, not the endpoint

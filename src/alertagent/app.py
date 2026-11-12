@@ -11,7 +11,7 @@ from .config import Settings, get_settings
 from .integrations import on_startup, Discord, on_shutdown, Model
 from .triage import triage_alert, build_alert_embed
 
-from . import ALERT_STATUS_FIRING, ALERT_STATUS_RESOLVED
+from . import ALERT_STATUS_FIRING, ALERT_STATUS_RESOLVED, SEVERITY_RANK
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,13 @@ def root() -> dict[str, str]:
 async def _run_triage(chan, alert, model, timeout, scratch_dir) -> None:
     async with _triage_semaphore:
         await triage_alert(chan, alert, model, timeout, scratch_dir)
+
+
+def _wants_triage(alert: AlertmanagerAlert, settings: Settings) -> bool:
+    """True if the alert meets the minimum triage severity. Alerts without a
+    recognizable severity label are always triaged."""
+    rank = SEVERITY_RANK.get(alert.labels.get("severity", ""))
+    return rank is None or rank >= SEVERITY_RANK[settings.min_triage_severity]
 
 
 def _log_triage_failure(task: asyncio.Task, alert: AlertmanagerAlert) -> None:
@@ -81,6 +88,14 @@ async def alertmanager_ingest(
             logger.info(
                 f"skipping duplicate alert {alert.labels.get("alertname", "unknown alert")} (startedAt {alert.starts_at})",
             )
+            continue
+        if not _wants_triage(alert, settings):
+            # Below the min triage severity: still post the alert, just don't run the agent.
+            try:
+                await chan.send(embed=build_alert_embed(alert))
+            except Exception:
+                cache.forget(alert)  # a resend can retry the post
+                raise
             continue
         task = asyncio.create_task(
             _run_triage(

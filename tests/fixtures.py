@@ -7,6 +7,7 @@ what ``alertmanager_ingest`` actually receives — including the absence of a
 """
 
 import copy
+from typing import Any
 
 EXTERNAL_URL = "https://monitoring.example.test"
 
@@ -160,7 +161,7 @@ WATCHDOG_MESSAGE: dict = {
 FIRING_ALERT: dict = FIRING_MESSAGE["alerts"][0]
 
 
-def clone_message(base: dict, **alert_overrides: str) -> dict:
+def clone_message(base: dict, **alert_overrides: Any) -> dict:
     """Deepcopy a webhook message, overriding alert fields (status, startsAt, endsAt)."""
     out = copy.deepcopy(base)
     for a in out["alerts"]:

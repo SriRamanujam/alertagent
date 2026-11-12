@@ -21,6 +21,7 @@ Configured entirely through environment variables. See `mise.toml` for another r
 | `ALERTAGENT_DISCORD_CHANNEL_ID` | yes | Right click the channel, "Copy Channel ID" at the bottom |
 | `ALERTAGENT_OPENAI_BASE_URL` | default `https://api.openai.com/v1` | any local OpenAI-compatible endpoint works, or leave at the default for real OpenAI |
 | `ALERTAGENT_MODEL_NAME` | default `gpt-5-mini` |  |
+| `ALERTAGENT_MIN_TRIAGE_SEVERITY` | default `warning` | one of `info`, `warning`, `critical`. Lowest severity the agent triages; lower-severity alerts are still posted to the channel, just without analysis |
 | `ALERTAGENT_OPENAI_API_KEY` | yes | for local endpoints that need no key, set to any non-blank string |
 
 ## Development
